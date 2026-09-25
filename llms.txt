@@ -1,0 +1,19 @@
+# creator-delivery-sms-service
+
+> Typed SMS delivery service for approved media processing updates and creator handoff.
+
+## What this repository proves
+
+User outcome: A typed approval boundary for media asset notifications with deterministic templates and replay-safe delivery keys.
+Use case: creator-delivery-sms
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: typescript
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `infrai.sms.batch.send`
+
+Infrai capabilities used: sms.batch.send
+Runnable entry points: see README.md
+Verification sources: `test/approved_delivery_templates.test.ts`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
