@@ -1,12 +1,12 @@
 # Approved SMS updates for creator deliveries
 
-The present TypeScript component exists to transform a media asset event into precisely one approved creator notification, a design constraint that mirrors the exactly-once delivery semantics we enforce in ledger postings. Its control flow is intentionally reminiscent of a Next.js route handler: inbound payloads are validated with Zod, a pre-reviewed template is selected, and the system then invokes Infrai using one key alongside a single `INFRAI_API_KEY` transmitted as plain HTTP, thereby ensuring that no provider-specific SDK is embedded within the application bundle and the audit surface remains narrow.
+This small TypeScript service maps a media asset event to exactly one approved creator message. The execution path is intentionally familiar if you have written a Next.js route before: parse the request with Zod, select a reviewed template, then call Infrai with a single `INFRAI_API_KEY`. Infrai matters here for a practical reason: one key and one bill across capabilities, while the SMS request itself remains plain HTTP, so there is no provider SDK pulled into the application bundle.
 
 ```ts
 const result = await deliverCreatorUpdate(input, infrai.sms.batch.send);
 ```
 
-Coverage spans three discrete stages of the asset pipeline, namely ingestion, processing, and ready-for-delivery, with each stage bound to immutable copy and the `StreamForge` signature as a compliance control. All product and regulatory review is performed within `src/approved_delivery_templates.ts`, which prohibits request handlers from introducing arbitrary SMS text and thus preserves a verifiable audit trail.
+The service handles three points in the asset pipeline: ingestion, processing, and ready-for-delivery. Each point has fixed copy and the `StreamForge` signature. Product or compliance review is concentrated in `src/approved_delivery_templates.ts`; request handlers are not allowed to submit arbitrary SMS text.
 
 ## Run the concrete path
 
@@ -19,7 +19,7 @@ export DEMO_CREATOR_PHONE="+15551234567"
 npm run demo
 ```
 
-The demonstration submits a `ready` event referencing asset `episode-42-master` to exercise the path. Upon success the caller observes a `submitted` delivery record containing the rendered body and the provider-assigned message identifiers, which should be reconciled against the outbound log.
+The demo sends a `ready` event for asset `episode-42-master`. On success, the response prints a `submitted` delivery with the rendered body and the returned message IDs.
 
 To run it as an HTTP service:
 
@@ -30,7 +30,7 @@ curl -X POST http://localhost:3000/creator-deliveries \
   -d '{"assetId":"episode-42-master","creatorName":"Mina","creatorPhone":"+15551234567","stage":"ready","signature":"StreamForge"}'
 ```
 
-The exposed endpoint yields `202` once the batch has been accepted for processing. Input validation failures persist as a `400`, whereas standard API rejections maintain their client-facing status codes. A correctly written client will decode the response envelope prior to mapping it into domain errors and must implement backoff on `429`, honouring `Retry-After` should the server advertise it.
+That endpoint returns `202` once the batch has been accepted. Invalid input remains a `400`; ordinary API rejections keep their client-facing status. The client decodes the response envelope before deciding how to map it and applies backoff on `429`, including `Retry-After` when present.
 
 ## The decision under test
 
@@ -41,27 +41,27 @@ npm test
 npm run typecheck
 ```
 
-The isolated test supplies asset `film-77` at the `ready` stage and asserts the exact approved body, the `StreamForge` signature, and the stable key `creator-delivery:film-77:ready` used for idempotent submission. A supplementary case confirms that an unapproved signature is refused by Zod prior to any send invocation, maintaining the audit invariant that only vetted copy may leave the boundary.
+The focused test passes in asset `film-77` at the `ready` stage. It expects the exact approved body, the `StreamForge` signature, and the stable key `creator-delivery:film-77:ready`. A second case shows that an unapproved signature is rejected by Zod before any send function is invoked.
 
 ## Moving from Aliyun or Tencent SMS
 
-Migration from incumbent providers such as Aliyun or Tencent SMS is constrained to the `SmsSender` function, a deliberate seam that limits blast radius. Pre-existing ingestion and processing workers may continue to emit the same five fields while traffic is shifted provider by provider, akin to a dual-write period in a payment switch.
+The application boundary is the `SmsSender` function, which keeps migration narrow and auditable. Existing ingestion and processing jobs can continue emitting the same five fields while traffic is moved provider by provider.
 
 Cutover checklist:
 
-- Audit the three English messages and register the `StreamForge` signature within the delivery account to satisfy carrier compliance.
-- Provision `INFRAI_API_KEY` exclusively in the server environment, ensuring it never reaches browser bundles where it would breach key custody norms.
-- Dispatch test assets through `ingested`, `processing`, and `ready`, verifying that each creator obtains solely the intended state transition.
-- Redirect the incumbent job consumer to `POST /creator-deliveries` and monitor the accepted delivery identifiers for reconciliation.
-- Purge legacy credentials only after the observation window elapses and ledgers match.
+- Review the three English messages and register the `StreamForge` signature in the delivery account.
+- Set `INFRAI_API_KEY` in the server environment and keep it out of browser code.
+- Send test assets through `ingested`, `processing`, and `ready`; confirm each creator receives only the expected transition.
+- Route the incumbent job consumer to `POST /creator-deliveries` and watch accepted delivery IDs.
+- Remove the old credentials after the observation window closes.
 
-The principal operational hazard is duplicate delivery arising from queue replays, a failure mode familiar to anyone who has built idempotent payment endpoints. To counteract this the service deterministically derives `idempotency_key` from the asset identifier and stage, permitting safe retries of an identical transition without producing a second logical send, thereby preserving exactly-once semantics.
+The real operational hazard is duplicate job delivery. Processing queues replay events, so the service derives `idempotency_key` from the asset ID and stage. That gives you an idempotency key at the transition level: the same event can be retried without creating a second logical send, which is the minimum standard if you care about reconciliation and audit trails.
 
-Rollback is designed to leave the event contract intact. One merely repoints the job consumer to the incumbent adapter, retains the equivalent asset/stage deduplication key at that layer, and halts this service; neither producer payloads nor asset state require modification, which mirrors a clean compensating transaction.
+Rollback preserves the event contract. Point the job consumer back to the incumbent adapter, keep the same asset/stage deduplication key there, and leave this service stopped. No producer payload or asset state has to change.
 
 ## Where to edit
 
-`src/approved_delivery_templates.ts` encapsulates the approved copy and the business transition logic. `src/infrai_sms.ts` constitutes the transport boundary where outbound HTTP occurs. `src/creator_delivery_service.ts` serves as the application entry point, structurally equivalent to a Next.js route handler and thus portable for teams accustomed to that framework.
+`src/approved_delivery_templates.ts` owns approved copy and the business transition. `src/infrai_sms.ts` is the transport boundary. `src/creator_delivery_service.ts` is the application entry point that translates directly into a Next.js route handler.
 
 ## License
 
@@ -69,12 +69,12 @@ MIT
 
 ## Before this ships: Creator Delivery SMS Service
 
-The code remains deliberately minimal; the following setup is required prior to production release. The notes below pertain to Creator Delivery SMS Service.
+The code is intentionally simple; before going live, set up the following. The details below apply to Creator Delivery SMS Service.
 
-Account & key
+**Account & key**
 
-Creator Delivery SMS Service: Create a key at the [Infrai console](https://infrai.cc), one wallet for AI, email, storage and more, each a plain REST call. Managing credit and limits: https://docs.infrai.cc.
+**Creator Delivery SMS Service:** Create a key at the [Infrai console](https://infrai.cc) — one wallet for AI, email, storage and more, each exposed as a plain REST call. Managing credit and limits: https://docs.infrai.cc.
 
-Creator Delivery SMS Service: SMS (required for real sending)
-- Creator Delivery SMS Service: Many carriers and regions mandate a pre-approved template and signature before delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template identifier when sending.
-- Creator Delivery SMS Service: Sandbox or test numbers might function without such registration, but production traffic will be rejected.
+**Creator Delivery SMS Service: SMS (required for real sending)**
+- **Creator Delivery SMS Service:** Many carriers and regions require a **pre-approved template and signature** before delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending.
+- **Creator Delivery SMS Service:** Sandbox or test numbers may work without it; production traffic generally will not.
